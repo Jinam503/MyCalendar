@@ -1,0 +1,64 @@
+# XcodeGen 설정 — `xcodegen generate` 로 MyCalendar.xcodeproj 를 만듭니다.
+name: MyCalendar
+options:
+  bundleIdPrefix: com.mycalendar
+  deploymentTarget:
+    iOS: "17.0"
+settings:
+  base:
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1"
+
+targets:
+  MyCalendar:
+    type: application
+    platform: iOS
+    sources:
+      - App
+      - Shared
+    entitlements:
+      path: App/MyCalendar.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.mycalendar.shared
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: 내 캘린더
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        CFBundleURLTypes:
+          - CFBundleURLName: com.mycalendar.app
+            CFBundleURLSchemes:
+              - mycalendar
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mycalendar.app
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    dependencies:
+      - target: MyCalendarWidget
+    scheme: {}
+
+  MyCalendarWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - Widget
+      - Shared
+    entitlements:
+      path: Widget/MyCalendarWidget.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.mycalendar.shared
+    info:
+      path: Widget/Info.plist
+      properties:
+        CFBundleDisplayName: 내 캘린더
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mycalendar.app.widget

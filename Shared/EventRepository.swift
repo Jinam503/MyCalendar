@@ -8,12 +8,11 @@ final class EventRepository {
     /// project.yml 의 App Group 과 같은 값
     static let defaultAppGroupID = "group.com.mycalendar.shared"
 
-    private let fileName = "events.json"
     private let queue = DispatchQueue(label: "EventRepository")
 
     /// AltStore 같은 사이드로딩 도구는 App Group 이름을 바꿔서 서명하고
     /// 바뀐 이름을 Info.plist 의 `ALTAppGroups` 에 적어 둡니다. 그 값부터 시도합니다.
-    private lazy var containerURL: URL = {
+    lazy var containerURL: URL = {
         var candidates: [String] = []
         if let alt = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String] {
             candidates += alt
@@ -24,11 +23,16 @@ final class EventRepository {
                 return url
             }
         }
-        // App Group 을 못 쓰는 경우: 앱은 동작하지만 위젯과 데이터 공유는 안 됨
         return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }()
 
-    private var fileURL: URL { containerURL.appendingPathComponent(fileName) }
+    private var fileURL: URL { containerURL.appendingPathComponent("events.json") }
+
+    private var imagesDir: URL {
+        let dir = containerURL.appendingPathComponent("images", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
 
     func load() -> [CalendarEvent] {
         queue.sync {
@@ -47,5 +51,27 @@ final class EventRepository {
             }
         }
         WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    // MARK: 이미지
+
+    func imageURL(_ name: String) -> URL {
+        imagesDir.appendingPathComponent(name)
+    }
+
+    func saveImage(_ data: Data) -> String? {
+        let name = UUID().uuidString + ".jpg"
+        do {
+            try data.write(to: imageURL(name), options: .atomic)
+            return name
+        } catch {
+            return nil
+        }
+    }
+
+    func deleteImages(_ names: [String]) {
+        for n in names {
+            try? FileManager.default.removeItem(at: imageURL(n))
+        }
     }
 }

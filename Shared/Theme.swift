@@ -25,6 +25,29 @@ enum Theme {
     static let weekendText = Color(white: 0.55)
     static let holiday = Color(red: 0.95, green: 0.33, blue: 0.30)
     static let accent = Color(red: 0.49, green: 0.83, blue: 0.88)
+
+    /// 카드·버튼 모서리
+    static let radius: CGFloat = 12
+    /// 오늘 칸 모서리
+    static let cellRadius: CGFloat = 10
+}
+
+extension Color {
+    /// "RRGGBB"
+    init?(hex: String) {
+        guard hex.count == 6, let v = UInt32(hex, radix: 16) else { return nil }
+        self.init(red: Double((v >> 16) & 0xFF) / 255,
+                  green: Double((v >> 8) & 0xFF) / 255,
+                  blue: Double(v & 0xFF) / 255)
+    }
+
+    static func hexString(from cg: CGColor) -> String {
+        let ui = UIColor(cgColor: cg)
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        ui.getRed(&r, green: &g, blue: &b, alpha: &a)
+        func byte(_ x: CGFloat) -> Int { max(0, min(255, Int((x * 255).rounded()))) }
+        return String(format: "%02X%02X%02X", byte(r), byte(g), byte(b))
+    }
 }
 
 enum EventPalette {
@@ -83,26 +106,15 @@ enum DayLabel {
     }
 }
 
-// MARK: - 각진 스위치
+// MARK: - 스위치
 
 struct SquareSwitch: View {
     @Binding var isOn: Bool
 
     var body: some View {
-        Button {
-            withAnimation(.easeInOut(duration: 0.15)) { isOn.toggle() }
-        } label: {
-            ZStack(alignment: isOn ? .trailing : .leading) {
-                Rectangle()
-                    .fill(isOn ? Color.white : Theme.surface2)
-                    .frame(width: 48, height: 28)
-                Rectangle()
-                    .fill(isOn ? Color.black : Color(white: 0.55))
-                    .frame(width: 22, height: 22)
-                    .padding(3)
-            }
-        }
-        .buttonStyle(.plain)
+        Toggle("", isOn: $isOn)
+            .labelsHidden()
+            .tint(Theme.accent)
     }
 }
 

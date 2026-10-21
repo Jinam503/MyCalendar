@@ -14,6 +14,7 @@ struct CalendarProvider: TimelineProvider {
     }
 
     func getSnapshot(in context: Context, completion: @escaping (CalendarEntry) -> Void) {
+        EKBridge.shared.invalidate()
         let events = EventRepository.shared.load()
         let shown = (context.isPreview && events.isEmpty) ? CalendarEvent.samples : events
         completion(CalendarEntry(date: Date(), events: shown))
@@ -27,7 +28,8 @@ struct CalendarProvider: TimelineProvider {
         // 자정 또는 오늘 남은 일정의 시작·종료 시각에 다시 그림
         let today = cal.startOfDay(for: now)
         let nextMidnight = cal.date(byAdding: .day, value: 1, to: today) ?? now.addingTimeInterval(86400)
-        let todays = events.occurrences(in: DateInterval(start: today, end: nextMidnight), cal: cal)
+        EKBridge.shared.invalidate()
+        let todays = CombinedSource.occurrences(local: events, in: DateInterval(start: today, end: nextMidnight), cal: cal)
         let changes = todays.flatMap { o -> [Date] in
             var list = [o.start]
             if let e = o.end { list.append(e) } else { list.append(o.start.addingTimeInterval(30 * 60)) }
@@ -101,7 +103,7 @@ struct MonthWidgetView: View {
 
     var body: some View {
         let days = MonthGrid.days(for: entry.date, cal: cal)
-        let map = entry.events.byDay(in: MonthGrid.range(of: days, cal: cal), cal: cal)
+        let map = CombinedSource.byDay(local: entry.events, in: MonthGrid.range(of: days, cal: cal), cal: cal)
         let today = cal.startOfDay(for: entry.date)
 
         switch family {
@@ -179,7 +181,7 @@ struct WidgetMonthGrid: View {
             let cellW = geo.size.width / 7
             let cellH = max(1, (geo.size.height - headerH) / CGFloat(rows))
             let chipFont = max(7, fontSize - 4)
-            let maxChips = showChips ? max(0, Int((cellH - fontSize - 6) / (chipFont + 5))) : 0
+            let maxChips = showChips ? min(4, max(0, Int((cellH - fontSize - 4) / (chipFont + 4.5)))) : 0
 
             VStack(spacing: 0) {
                 HStack(spacing: 0) {
@@ -263,14 +265,15 @@ struct WidgetDayCell: View {
                 }
                 .padding(.horizontal, 1)
             } else if let first = occurrences.first {
-                Rectangle()
+                Circle()
                     .fill(isToday ? Color.black.opacity(0.7) : first.color)
                     .frame(width: 4, height: 4)
             }
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(isToday ? Color.white : Color.clear)
+        .background(isToday ? Color.white : Color.clear, in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .padding(0.5)
         .opacity(inMonth ? 1 : 0.35)
     }
 }
@@ -283,7 +286,7 @@ struct UpcomingWidgetView: View {
 
     var body: some View {
         let small = family == .systemSmall
-        let list = entry.events.upcoming(from: entry.date, limit: small ? 3 : 4)
+        let list = CombinedSource.upcoming(local: entry.events, from: entry.date, limit: small ? 3 : 4)
 
         Group {
             if small {
@@ -328,7 +331,7 @@ struct LockScreenWidgetView: View {
     let entry: CalendarEntry
 
     var body: some View {
-        let next = entry.events.upcoming(from: entry.date, limit: 2)
+        let next = CombinedSource.upcoming(local: entry.events, from: entry.date, limit: 2)
         switch family {
         case .accessoryInline:
             if let n = next.first {
@@ -338,7 +341,7 @@ struct LockScreenWidgetView: View {
             }
 
         case .accessoryCircular:
-            let count = entry.events.occurrences(on: entry.date).count
+            let count = CombinedSource.onDay(local: entry.events, entry.date).count
             ZStack {
                 AccessoryWidgetBackground()
                 VStack(spacing: -1) {
@@ -411,7 +414,7 @@ struct EventLine: View {
         let dayPrefix = (showDay && !Calendar.kr.isDateInToday(o.start) && o.start > Date())
             ? DayLabel.relative(o.start) + " · " : ""
         HStack(spacing: 6) {
-            Rectangle()
+            RoundedRectangle(cornerRadius: 1.5)
                 .fill(o.color)
                 .frame(width: 3)
             VStack(alignment: .leading, spacing: 0) {

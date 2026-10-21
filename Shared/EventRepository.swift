@@ -12,16 +12,24 @@ final class EventRepository {
 
     /// AltStore 같은 사이드로딩 도구는 App Group 이름을 바꿔서 서명하고
     /// 바뀐 이름을 Info.plist 의 `ALTAppGroups` 에 적어 둡니다. 그 값부터 시도합니다.
-    lazy var containerURL: URL = {
+    lazy var groupID: String? = {
         var candidates: [String] = []
         if let alt = Bundle.main.object(forInfoDictionaryKey: "ALTAppGroups") as? [String] {
             candidates += alt
         }
-        candidates.append(Self.defaultAppGroupID)
+        candidates.append(EventRepository.defaultAppGroupID)
         for id in candidates {
-            if let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id) {
-                return url
+            if FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id) != nil {
+                return id
             }
+        }
+        return nil
+    }()
+
+    lazy var containerURL: URL = {
+        if let id = self.groupID,
+           let url = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: id) {
+            return url
         }
         return FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
     }()

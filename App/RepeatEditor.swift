@@ -30,7 +30,7 @@ struct RepeatEditor: View {
                     }
                 }
                 .padding(14)
-                .background(Theme.surface)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
 
                 if let r = rule {
                     switch r.frequency {
@@ -76,7 +76,7 @@ struct RepeatEditor: View {
                         .foregroundStyle(on ? Color.black : Color.white)
                         .frame(maxWidth: .infinity)
                         .frame(height: 40)
-                        .background(on ? Color.white : Theme.surface2)
+                        .background(on ? Color.white : Theme.surface2, in: RoundedRectangle(cornerRadius: 9, style: .continuous))
                 }
                 .buttonStyle(.plain)
             }
@@ -165,13 +165,13 @@ struct RepeatEditor: View {
                             .foregroundStyle(on ? Color.black : Color.white)
                             .frame(maxWidth: .infinity)
                             .frame(height: 42)
-                            .background(on ? Color.white : Color.clear)
+                            .background(on ? Color.white : Color.clear, in: Circle())
                     }
                     .buttonStyle(.plain)
                 }
             }
             .padding(10)
-            .background(Theme.surface)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
 
             VStack(spacing: 6) {
                 optionRow("매월 마지막 날", selected: r.monthly == .lastDay) {
@@ -221,7 +221,7 @@ struct RepeatEditor: View {
                             .foregroundStyle(showUntilPicker ? Theme.accent : Color.white)
                             .padding(.horizontal, 12)
                             .padding(.vertical, 8)
-                            .background(Theme.surface2)
+                            .background(Theme.surface2, in: Capsule())
                     }
                     .buttonStyle(.plain)
                 }
@@ -238,7 +238,7 @@ struct RepeatEditor: View {
                     .padding(.bottom, 8)
             }
         }
-        .background(Theme.surface)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
     }
 
     // MARK: 공통
@@ -258,7 +258,7 @@ struct RepeatEditor: View {
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 14)
-            .background(Theme.surface)
+            .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -270,7 +270,7 @@ struct RepeatEditor: View {
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundStyle(.white)
                 .frame(width: 48, height: 48)
-                .background(Theme.surface2)
+                .background(Theme.surface2, in: Circle())
         }
         .buttonStyle(.plain)
     }

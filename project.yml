@@ -28,6 +28,8 @@ targets:
       path: App/Info.plist
       properties:
         CFBundleDisplayName: MyCalendar
+        NSCalendarsFullAccessUsageDescription: 구글·아이폰 캘린더 일정을 보여주고 추가·수정하려면 캘린더 접근이 필요해요.
+        NSCalendarsUsageDescription: 구글·아이폰 캘린더 일정을 보여주고 추가·수정하려면 캘린더 접근이 필요해요.
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -58,6 +60,8 @@ targets:
       path: Widget/Info.plist
       properties:
         CFBundleDisplayName: MyCalendar
+        NSCalendarsFullAccessUsageDescription: 구글·아이폰 캘린더 일정을 보여주고 추가·수정하려면 캘린더 접근이 필요해요.
+        NSCalendarsUsageDescription: 구글·아이폰 캘린더 일정을 보여주고 추가·수정하려면 캘린더 접근이 필요해요.
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:

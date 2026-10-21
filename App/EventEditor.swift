@@ -1,10 +1,19 @@
 import SwiftUI
 import PhotosUI
+import EventKit
 
 private enum PickTarget { case start, end }
 
 private struct ImageRef: Identifiable {
     let id: String
+}
+
+/// 저장할 캘린더 선택지
+private struct CalendarChoice: Identifiable {
+    let id: String          // "local" 또는 calendarIdentifier
+    let calendarID: String? // nil = 내 캘린더
+    let title: String
+    let color: Color
 }
 
 struct EventEditor: View {
@@ -25,15 +34,18 @@ struct EventEditor: View {
     @State private var location: String
     @State private var url: String
     @State private var imageNames: [String]
-    @State private var alert: AlertOption
+    @State private var alertOffset: Int?
     @State private var repeatRule: RepeatRule?
+    @State private var calendarID: String?
 
     @State private var picking: PickTarget?
     @State private var photoItems: [PhotosPickerItem] = []
     @State private var addedImages: [String] = []
     @State private var showRepeat = false
+    @State private var showAlert = false
     @State private var confirmDelete = false
     @State private var viewing: ImageRef?
+    @State private var errorMessage: String?
     @FocusState private var titleFocused: Bool
 
     private let cal = Calendar.kr
@@ -53,30 +65,62 @@ struct EventEditor: View {
             _location = State(initialValue: e.location)
             _url = State(initialValue: e.url)
             _imageNames = State(initialValue: e.imageNames)
-            _alert = State(initialValue: e.alert)
+            _alertOffset = State(initialValue: e.alertOffset)
             _repeatRule = State(initialValue: e.repeatRule)
+            _calendarID = State(initialValue: e.ekCalendarID)
         } else {
-            // 새 일정: 기본은 "할 일"
-            let day = cal.startOfDay(for: date)
+            // 새 일정: 시작·종료 시간이 있는 일정이 기본 (다음 정시부터 1시간)
+            var comps = cal.dateComponents([.year, .month, .day], from: date)
+            if cal.isDateInToday(date) {
+                comps.hour = min(cal.component(.hour, from: Date()) + 1, 23)
+            } else {
+                comps.hour = 9
+            }
+            comps.minute = 0
+            let s = cal.date(from: comps) ?? date
             _title = State(initialValue: "")
-            _isAllDay = State(initialValue: true)
-            _start = State(initialValue: day)
-            _hasEnd = State(initialValue: false)
-            _end = State(initialValue: day)
+            _isAllDay = State(initialValue: false)
+            _start = State(initialValue: s)
+            _hasEnd = State(initialValue: true)
+            _end = State(initialValue: s.addingTimeInterval(3600))
             _colorIndex = State(initialValue: 0)
             _notes = State(initialValue: "")
             _location = State(initialValue: "")
             _url = State(initialValue: "")
             _imageNames = State(initialValue: [])
-            _alert = State(initialValue: AlertOption.defaultFor(allDay: true))
+            _alertOffset = State(initialValue: AlertText.defaultTimed)
             _repeatRule = State(initialValue: nil)
+
+            var defaultCal: String? = nil
+            if let id = CalendarSettings.defaultCalendarID,
+               let c = EKBridge.shared.calendar(id: id), c.allowsContentModifications {
+                defaultCal = id
+            }
+            _calendarID = State(initialValue: defaultCal)
         }
     }
 
     private var trimmedTitle: String { title.trimmingCharacters(in: .whitespacesAndNewlines) }
+    private var isExternalTarget: Bool { calendarID != nil }
 
-    private var pickerComponents: DatePickerComponents {
-        isAllDay ? [.date] : [.date, .hourAndMinute]
+    private var choices: [CalendarChoice] {
+        var list = [CalendarChoice(id: "local", calendarID: nil, title: "내 캘린더", color: Theme.accent)]
+        for c in EKBridge.shared.writableCalendars() {
+            list.append(CalendarChoice(id: c.calendarIdentifier,
+                                       calendarID: c.calendarIdentifier,
+                                       title: c.title,
+                                       color: Color(cgColor: c.cgColor)))
+        }
+        return list
+    }
+
+    private var currentChoice: CalendarChoice {
+        let list = choices
+        return list.first { $0.calendarID == calendarID } ?? list[0]
+    }
+
+    private var titleColor: Color {
+        isExternalTarget ? currentChoice.color : EventPalette.color(colorIndex)
     }
 
     var body: some View {
@@ -85,11 +129,12 @@ struct EventEditor: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 0) {
                         titleRow
-                        colorRow
+                        if !isExternalTarget { colorRow }
                         timeSection
                         pickerSection
                         divider
                         repeatRow
+                        calendarRow
                         alertRow
                         divider
                         locationRow
@@ -127,6 +172,9 @@ struct EventEditor: View {
             .navigationDestination(isPresented: $showRepeat) {
                 RepeatEditor(rule: $repeatRule, start: start)
             }
+            .navigationDestination(isPresented: $showAlert) {
+                AlertEditor(offset: $alertOffset, allDay: isAllDay)
+            }
             .confirmationDialog("이 일정을 삭제할까요?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 if let original, original.repeatRule != nil {
                     Button("이 일정만 삭제", role: .destructive) {
@@ -145,11 +193,25 @@ struct EventEditor: View {
                 }
                 Button("취소", role: .cancel) {}
             }
+            .alert("저장하지 못했어요", isPresented: Binding(get: { errorMessage != nil },
+                                                        set: { if !$0 { errorMessage = nil } })) {
+                Button("확인", role: .cancel) {}
+            } message: {
+                Text(errorMessage ?? "")
+            }
             .fullScreenCover(item: $viewing) { ref in
                 ImageViewer(name: ref.id)
             }
             .onChange(of: isAllDay) { _, allDay in
                 allDayChanged(allDay)
+            }
+            .onChange(of: hasEnd) { _, on in
+                // 종료 지정을 켜면 시작 기준 1시간 뒤(할 일은 같은 날)가 기본
+                if on {
+                    end = isAllDay ? start : start.addingTimeInterval(3600)
+                } else if picking == .end {
+                    picking = nil
+                }
             }
             .onChange(of: start) { old, new in
                 // 시작을 옮기면 종료도 같은 간격만큼 따라감
@@ -171,8 +233,8 @@ struct EventEditor: View {
 
     private var titleRow: some View {
         HStack(spacing: 14) {
-            Rectangle()
-                .fill(EventPalette.color(colorIndex))
+            RoundedRectangle(cornerRadius: 2.5)
+                .fill(titleColor)
                 .frame(width: 5, height: 40)
             TextField("제목", text: $title, prompt: Text("제목").foregroundColor(Color(white: 0.35)))
                 .font(.system(size: 30, weight: .bold))
@@ -189,19 +251,20 @@ struct EventEditor: View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 10) {
                 ForEach(EventPalette.colors.indices, id: \.self) { i in
-                    Rectangle()
+                    Circle()
                         .fill(EventPalette.colors[i])
                         .frame(width: 26, height: 26)
                         .overlay(
-                            Rectangle().stroke(Color.white, lineWidth: colorIndex == i ? 2 : 0)
+                            Circle().stroke(Color.white, lineWidth: colorIndex == i ? 2.5 : 0)
+                                .padding(-3)
                         )
-                        .padding(2)
+                        .padding(4)
                         .onTapGesture { colorIndex = i }
                 }
             }
-            .padding(.horizontal, 22)
+            .padding(.horizontal, 20)
         }
-        .padding(.bottom, 10)
+        .padding(.bottom, 6)
     }
 
     // MARK: 날짜 · 시간
@@ -217,7 +280,7 @@ struct EventEditor: View {
                         timeBlock(end, target: .end)
                     }
                     Spacer(minLength: 4)
-                    squareChip("할 일", on: isAllDay) { isAllDay.toggle() }
+                    pillChip("할 일", on: isAllDay) { isAllDay.toggle() }
                 }
                 HStack {
                     Text(isAllDay ? "종료일 지정" : "종료 시간 지정")
@@ -246,34 +309,75 @@ struct EventEditor: View {
                         .font(.system(size: 13))
                         .opacity(0.85)
                     Text(KFmt.time(d))
-                        .font(.system(size: 26, weight: .bold))
+                        .font(.system(size: 28, weight: .bold))
                 }
             }
-            .foregroundStyle(active ? Theme.accent : Color.white)
+            .foregroundStyle(active ? Color.white : Color(white: active || picking == nil ? 1 : 0.55))
+            .padding(.vertical, 4)
+            .padding(.horizontal, 8)
+            .background(active ? Theme.surface2 : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
         .buttonStyle(.plain)
     }
 
+    /// 돌려서 고르는 선택기 + 빠른 길이 버튼
     @ViewBuilder
     private var pickerSection: some View {
-        if picking == .start {
-            DatePicker("", selection: $start,
-                       displayedComponents: pickerComponents)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .tint(Theme.accent)
-                .padding(.horizontal, 16)
-        } else if picking == .end && hasEnd {
-            DatePicker("", selection: $end, in: start...,
-                       displayedComponents: pickerComponents)
-                .datePickerStyle(.graphical)
-                .labelsHidden()
-                .tint(Theme.accent)
-                .padding(.horizontal, 16)
+        if let target = picking {
+            VStack(spacing: 10) {
+                if target == .start {
+                    WheelDatePicker(date: $start,
+                                    mode: isAllDay ? .date : .dateAndTime,
+                                    minuteInterval: 5)
+                        .frame(height: 200)
+                } else {
+                    WheelDatePicker(date: $end,
+                                    mode: isAllDay ? .date : .dateAndTime,
+                                    minuteInterval: 5,
+                                    minimumDate: start)
+                        .frame(height: 200)
+                }
+
+                if hasEnd && !isAllDay {
+                    HStack(spacing: 8) {
+                        ForEach([0, 30, 60, 90, 120], id: \.self) { m in
+                            durationChip(m)
+                        }
+                    }
+                } else if hasEnd && isAllDay {
+                    HStack(spacing: 8) {
+                        ForEach([1, 2, 3, 7], id: \.self) { d in
+                            dayLengthChip(d)
+                        }
+                    }
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.bottom, 8)
         }
     }
 
-    // MARK: 반복 · 알림
+    private func durationChip(_ minutes: Int) -> some View {
+        let on = Int(end.timeIntervalSince(start) / 60) == minutes
+        let label: String
+        if minutes == 0 { label = "0분" }
+        else if minutes < 60 { label = "\(minutes)분" }
+        else if minutes % 60 == 0 { label = "\(minutes / 60)시간" }
+        else { label = "\(minutes / 60)시간 \(minutes % 60)분" }
+        return pillChip(label, on: on, small: true) {
+            end = start.addingTimeInterval(TimeInterval(minutes * 60))
+        }
+    }
+
+    private func dayLengthChip(_ days: Int) -> some View {
+        let length = (cal.dateComponents([.day], from: cal.startOfDay(for: start), to: cal.startOfDay(for: end)).day ?? 0) + 1
+        return pillChip("\(days)일", on: length == days, small: true) {
+            end = cal.date(byAdding: .day, value: days - 1, to: cal.startOfDay(for: start)) ?? start
+        }
+    }
+
+    // MARK: 반복 · 캘린더 · 알림
 
     private var repeatRow: some View {
         Button {
@@ -291,28 +395,49 @@ struct EventEditor: View {
         .buttonStyle(.plain)
     }
 
-    private var alertRow: some View {
-        row("bell") {
+    private var calendarRow: some View {
+        row("calendar") {
             Menu {
-                ForEach(isAllDay ? AlertOption.allDayOptions : AlertOption.timedOptions) { opt in
+                ForEach(choices) { c in
                     Button {
-                        alert = opt
+                        calendarID = c.calendarID
                     } label: {
-                        if alert == opt {
-                            Label(opt.label, systemImage: "checkmark")
+                        if c.calendarID == calendarID {
+                            Label(c.title, systemImage: "checkmark")
                         } else {
-                            Text(opt.label)
+                            Text(c.title)
                         }
                     }
                 }
             } label: {
-                Text(alert.label)
-                    .font(.system(size: 16))
-                    .foregroundStyle(alert == .none ? Theme.secondaryText : Color.white)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Theme.surface2)
+                HStack(spacing: 8) {
+                    Circle().fill(currentChoice.color).frame(width: 9, height: 9)
+                    Text(currentChoice.title)
+                        .font(.system(size: 16))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(Theme.surface2, in: Capsule())
             }
+        }
+    }
+
+    private var alertRow: some View {
+        row("bell") {
+            Button {
+                picking = nil
+                showAlert = true
+            } label: {
+                Text(AlertText.label(alertOffset, allDay: isAllDay))
+                    .font(.system(size: 16))
+                    .foregroundStyle(alertOffset == nil ? Theme.secondaryText : Color.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 9)
+                    .background(Theme.surface2, in: Capsule())
+            }
+            .buttonStyle(.plain)
         }
     }
 
@@ -364,23 +489,32 @@ struct EventEditor: View {
         }
     }
 
+    @ViewBuilder
     private var imageRow: some View {
-        row("photo") {
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(imageNames, id: \.self) { name in
-                        thumbnail(name)
-                    }
-                    PhotosPicker(selection: $photoItems, maxSelectionCount: 10, matching: .images) {
-                        VStack(spacing: 4) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 18))
-                            Text("이미지")
-                                .font(.system(size: 12))
+        if isExternalTarget {
+            row("photo") {
+                Text("구글·아이폰 캘린더 일정에는 이미지를 넣을 수 없어요")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.secondaryText)
+            }
+        } else {
+            row("photo") {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 8) {
+                        ForEach(imageNames, id: \.self) { name in
+                            thumbnail(name)
                         }
-                        .foregroundStyle(Theme.secondaryText)
-                        .frame(width: 72, height: 72)
-                        .background(Theme.surface)
+                        PhotosPicker(selection: $photoItems, maxSelectionCount: 10, matching: .images) {
+                            VStack(spacing: 4) {
+                                Image(systemName: "plus")
+                                    .font(.system(size: 18))
+                                Text("이미지")
+                                    .font(.system(size: 12))
+                            }
+                            .foregroundStyle(Theme.secondaryText)
+                            .frame(width: 72, height: 72)
+                            .background(Theme.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        }
                     }
                 }
             }
@@ -399,7 +533,7 @@ struct EventEditor: View {
                 }
             }
             .frame(width: 72, height: 72)
-            .clipped()
+            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
             .contentShape(Rectangle())
             .onTapGesture { viewing = ImageRef(id: name) }
 
@@ -407,12 +541,13 @@ struct EventEditor: View {
                 imageNames.removeAll { $0 == name }
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .bold))
+                    .font(.system(size: 9, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 22, height: 22)
-                    .background(Color.black.opacity(0.7))
+                    .frame(width: 20, height: 20)
+                    .background(Color.black.opacity(0.7), in: Circle())
             }
             .buttonStyle(.plain)
+            .padding(4)
         }
     }
 
@@ -432,18 +567,18 @@ struct EventEditor: View {
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+        .padding(.vertical, 13)
     }
 
-    private func squareChip(_ text: String, on: Bool, action: @escaping () -> Void) -> some View {
+    private func pillChip(_ text: String, on: Bool, small: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Text(text)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundStyle(on ? Color.black : Theme.secondaryText)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(on ? Color.white : Color.clear)
-                .overlay(Rectangle().stroke(on ? Color.white : Theme.secondaryText, lineWidth: 1))
+                .font(.system(size: small ? 14 : 16, weight: .semibold))
+                .foregroundStyle(on ? Color.white : Theme.secondaryText)
+                .padding(.horizontal, small ? 12 : 14)
+                .padding(.vertical, small ? 6 : 8)
+                .background(on ? Theme.surface2 : Color.clear, in: Capsule())
+                .overlay(Capsule().stroke(on ? Color.white : Theme.secondaryText.opacity(0.6), lineWidth: 1.2))
         }
         .buttonStyle(.plain)
     }
@@ -454,7 +589,8 @@ struct EventEditor: View {
                 .font(.system(size: 26, weight: .semibold))
                 .foregroundStyle(.black)
                 .frame(width: 64, height: 64)
-                .background(Color.white)
+                .background(Color(white: 0.88), in: Circle())
+                .shadow(color: .black.opacity(0.4), radius: 8, y: 3)
         }
         .buttonStyle(.plain)
         .disabled(trimmedTitle.isEmpty)
@@ -476,9 +612,8 @@ struct EventEditor: View {
             start = s
             end = s.addingTimeInterval(3600)
         }
-        let options = allDay ? AlertOption.allDayOptions : AlertOption.timedOptions
-        if !options.contains(alert) {
-            alert = AlertOption.defaultFor(allDay: allDay)
+        if alertOffset != nil {
+            alertOffset = AlertText.defaultOffset(allDay: allDay)
         }
     }
 
@@ -496,7 +631,6 @@ struct EventEditor: View {
     }
 
     private func cancel() {
-        // 저장 안 하고 닫으면 새로 넣은 이미지는 지움
         EventRepository.shared.deleteImages(addedImages)
         dismiss()
     }
@@ -518,7 +652,7 @@ struct EventEditor: View {
         var rule = repeatRule
         if let u = rule?.until, u < s { rule?.until = s }
 
-        let event = CalendarEvent(id: original?.id ?? UUID(),
+        var event = CalendarEvent(id: original?.id ?? UUID(),
                                   title: trimmedTitle,
                                   start: s,
                                   end: e,
@@ -527,17 +661,26 @@ struct EventEditor: View {
                                   notes: notes.trimmingCharacters(in: .whitespacesAndNewlines),
                                   location: location.trimmingCharacters(in: .whitespacesAndNewlines),
                                   url: url.trimmingCharacters(in: .whitespacesAndNewlines),
-                                  imageNames: imageNames,
-                                  alert: alert,
+                                  imageNames: isExternalTarget ? [] : imageNames,
+                                  alertOffset: alertOffset,
                                   repeatRule: rule,
                                   exceptions: original?.exceptions ?? [])
-        store.upsert(event)
+        event.ekEventID = original?.ekEventID
+        event.ekCalendarID = calendarID
+        event.ekOccurrenceStart = original?.ekOccurrenceStart
 
-        // 빼낸 이미지 파일 정리
-        let removed = ((original?.imageNames ?? []) + addedImages).filter { !imageNames.contains($0) }
+        do {
+            try store.save(event, to: calendarID, original: original)
+        } catch {
+            errorMessage = error.localizedDescription
+            return
+        }
+
+        let kept = isExternalTarget ? [] : imageNames
+        let removed = ((original?.imageNames ?? []) + addedImages).filter { !kept.contains($0) }
         EventRepository.shared.deleteImages(removed)
 
-        if alert != .none { NotificationScheduler.requestAuthorization() }
+        if alertOffset != nil && !isExternalTarget { NotificationScheduler.requestAuthorization() }
         dismiss()
     }
 }
@@ -561,10 +704,10 @@ private struct ImageViewer: View {
                 dismiss()
             } label: {
                 Image(systemName: "xmark")
-                    .font(.system(size: 18, weight: .bold))
+                    .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(Color.white.opacity(0.15))
+                    .frame(width: 40, height: 40)
+                    .background(Color.white.opacity(0.18), in: Circle())
             }
             .buttonStyle(.plain)
             .padding(16)

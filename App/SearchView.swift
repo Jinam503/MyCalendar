@@ -10,14 +10,53 @@ struct SearchView: View {
 
     private let cal = Calendar.kr
 
-    private var results: [CalendarEvent] {
+    private struct Hit: Identifiable {
+        let id: String
+        let event: CalendarEvent
+        let date: Date
+    }
+
+    private func matches(_ e: CalendarEvent, _ q: String) -> Bool {
+        [e.title, e.location, e.notes, e.url].contains { $0.localizedCaseInsensitiveContains(q) }
+    }
+
+    private var results: [Hit] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !q.isEmpty else { return [] }
-        return store.events
-            .filter { e in
-                [e.title, e.location, e.notes, e.url].contains { $0.localizedCaseInsensitiveContains(q) }
+
+        var hits: [Hit] = []
+        if CalendarSettings.showLocal {
+            for e in store.events where matches(e, q) {
+                hits.append(Hit(id: e.id.uuidString, event: e, date: displayDate(e)))
             }
-            .sorted { displayDate($0) > displayDate($1) }
+        }
+
+        // 구글·아이폰 캘린더: 앞뒤 1년 안에서 찾고, 같은 일정은 오늘에 가장 가까운 것 하나만
+        let today = cal.startOfDay(for: Date())
+        if let from = cal.date(byAdding: .year, value: -1, to: today),
+           let to = cal.date(byAdding: .year, value: 1, to: today) {
+            var best: [String: Occurrence] = [:]
+            for o in EKBridge.shared.occurrences(in: DateInterval(start: from, end: to)) where matches(o.event, q) {
+                let key = o.event.ekEventID ?? o.id
+                if let cur = best[key] {
+                    let curScore = score(cur.start, today: today)
+                    let newScore = score(o.start, today: today)
+                    if newScore < curScore { best[key] = o }
+                } else {
+                    best[key] = o
+                }
+            }
+            for (key, o) in best {
+                hits.append(Hit(id: key, event: o.event, date: o.start))
+            }
+        }
+        return hits.sorted { $0.date > $1.date }
+    }
+
+    /// 오늘 이후면 가까울수록, 지난 일정은 그보다 뒤로
+    private func score(_ d: Date, today: Date) -> Double {
+        let diff = d.timeIntervalSince(today)
+        return diff >= 0 ? diff : 1e12 - diff
     }
 
     var body: some View {
@@ -43,7 +82,7 @@ struct SearchView: View {
                 }
                 .padding(.horizontal, 12)
                 .frame(height: 44)
-                .background(Theme.surface)
+                .background(Theme.surface, in: Capsule())
 
                 Button("닫기") { dismiss() }
                     .font(.system(size: 17))
@@ -65,12 +104,12 @@ struct SearchView: View {
             } else {
                 ScrollView {
                     LazyVStack(spacing: 6) {
-                        ForEach(results) { e in
+                        ForEach(results) { hit in
                             Button {
-                                onPick(displayDate(e))
+                                onPick(hit.date)
                                 dismiss()
                             } label: {
-                                resultRow(e)
+                                resultRow(hit.event, date: hit.date)
                             }
                             .buttonStyle(.plain)
                         }
@@ -96,10 +135,9 @@ struct SearchView: View {
         return next ?? e.start
     }
 
-    private func resultRow(_ e: CalendarEvent) -> some View {
-        let d = displayDate(e)
+    private func resultRow(_ e: CalendarEvent, date d: Date) -> some View {
         return HStack(spacing: 12) {
-            Rectangle().fill(e.color).frame(width: 4, height: 38)
+            RoundedRectangle(cornerRadius: 2).fill(e.color).frame(width: 4, height: 38)
             VStack(alignment: .leading, spacing: 3) {
                 Text(e.title.isEmpty ? "제목 없음" : e.title)
                     .font(.system(size: 16, weight: .semibold))
@@ -119,7 +157,7 @@ struct SearchView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
-        .background(Theme.surface)
+        .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
         .contentShape(Rectangle())
     }
 

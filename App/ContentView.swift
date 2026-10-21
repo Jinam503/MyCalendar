@@ -15,58 +15,70 @@ struct ContentView: View {
     @State private var forward = true
     @State private var editorTarget: EditorTarget?
     @State private var showSearch = false
+    @State private var showDateJump = false
+    @State private var showCalendars = false
 
     private let cal = Calendar.kr
+
+    /// 칸 하나에 일정 4개가 들어가는 최소 높이
+    static let minCellHeight: CGFloat = 88
 
     private var monthKey: Int {
         cal.component(.year, from: month) * 100 + cal.component(.month, from: month)
     }
 
+    private var isCurrentMonth: Bool {
+        cal.isDate(month, equalTo: Date(), toGranularity: .month)
+    }
+
     var body: some View {
         let days = MonthGrid.days(for: month, cal: cal)
         let range = MonthGrid.range(of: days, cal: cal)
-        let map = store.events.byDay(in: range, cal: cal)
+        let map = store.byDay(in: range)
+        let rows = CGFloat(max(1, days.count / 7))
 
         GeometryReader { geo in
             let total = geo.size.height
             let headerH: CGFloat = 60
             let weekdayH: CGFloat = 24
-            let gridH = max(100, total * 0.7 - headerH - weekdayH)
-            let panelH = max(80, total - headerH - weekdayH - gridH - 1)
+            let gridH = max(total * 0.7 - headerH - weekdayH, rows * Self.minCellHeight)
+            let panelMin = max(80, total - headerH - weekdayH - gridH - 1)
 
-            VStack(spacing: 0) {
-                header.frame(height: headerH)
-                weekdayRow.frame(height: weekdayH)
+            ScrollView(.vertical) {
+                VStack(spacing: 0) {
+                    header.frame(height: headerH)
+                    weekdayRow.frame(height: weekdayH)
 
-                ZStack {
-                    MonthGridView(month: month,
-                                  days: days,
-                                  selected: selected,
-                                  byDay: map,
-                                  onTap: tap)
-                        .id(monthKey)
-                        .transition(.push(from: forward ? .trailing : .leading))
+                    ZStack {
+                        MonthGridView(month: month,
+                                      days: days,
+                                      selected: selected,
+                                      byDay: map,
+                                      onTap: tap)
+                            .id(monthKey)
+                            .transition(.push(from: forward ? .trailing : .leading))
+                    }
+                    .frame(height: gridH)
+                    .clipped()
+
+                    Rectangle().fill(Theme.line).frame(height: 1)
+
+                    DayPanel(date: selected,
+                             items: map[selected] ?? store.occurrences(on: selected),
+                             marks: KoreanHolidays.marks(for: selected, cal: cal),
+                             onOpen: { o in editorTarget = EditorTarget(event: o.event, date: o.start) },
+                             onAdd: { editorTarget = EditorTarget(event: nil, date: selected) },
+                             onDelete: { o, onlyThis in
+                                 if onlyThis { store.deleteOccurrence(of: o.event, on: o.start) }
+                                 else { store.delete(o.event) }
+                             })
+                        .frame(minHeight: panelMin, alignment: .top)
                 }
-                .frame(height: gridH)
-                .clipped()
-
-                Rectangle().fill(Theme.line).frame(height: 1)
-
-                DayPanel(date: selected,
-                         items: map[selected] ?? store.events.occurrences(on: selected, cal: cal),
-                         marks: KoreanHolidays.marks(for: selected, cal: cal),
-                         onOpen: { o in editorTarget = EditorTarget(event: o.event, date: o.start) },
-                         onAdd: { editorTarget = EditorTarget(event: nil, date: selected) },
-                         onDelete: { o, onlyThis in
-                             if onlyThis { store.deleteOccurrence(of: o.event, on: o.start) }
-                             else { store.delete(o.event) }
-                         })
-                    .frame(height: panelH)
             }
+            .scrollIndicators(.hidden)
+            .simultaneousGesture(swipe)
         }
         .background(Theme.bg.ignoresSafeArea())
-        .contentShape(Rectangle())
-        .simultaneousGesture(swipe)
         .fullScreenCover(item: $editorTarget) { target in
             EventEditor(event: target.event, date: target.date)
                 .environmentObject(store)
@@ -79,6 +91,21 @@ struct ContentView: View {
                 .environment(\.locale, koLocale)
                 .preferredColorScheme(.dark)
         }
+        .sheet(isPresented: $showDateJump) {
+            DateJumpSheet(initial: selected) { date in go(to: date) }
+                .environment(\.locale, koLocale)
+                .preferredColorScheme(.dark)
+                .presentationDetents([.height(390)])
+                .presentationCornerRadius(28)
+                .presentationBackground(Theme.surface)
+        }
+        .sheet(isPresented: $showCalendars) {
+            CalendarSettingsView()
+                .environmentObject(store)
+                .environment(\.locale, koLocale)
+                .preferredColorScheme(.dark)
+                .presentationCornerRadius(28)
+        }
         .onOpenURL { url in
             if let d = DeepLink.date(from: url) { go(to: d) }
         }
@@ -87,28 +114,61 @@ struct ContentView: View {
     // MARK: 위쪽
 
     private var header: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Text(verbatim: "\(cal.component(.month, from: month))월")
-                .font(.system(size: 40, weight: .semibold))
-                .foregroundStyle(.white)
-            Text(verbatim: "\(cal.component(.year, from: month))년")
-                .font(.system(size: 17, weight: .medium))
-                .foregroundStyle(Theme.secondaryText)
-            Spacer()
-            HStack(spacing: 4) {
-                iconButton("magnifyingglass") { showSearch = true }
-                iconButton("calendar") { go(to: Date()) }
+        HStack(alignment: .center, spacing: 8) {
+            Button {
+                showDateJump = true
+            } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(verbatim: "\(cal.component(.month, from: month))월")
+                        .font(.system(size: 38, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(verbatim: "\(cal.component(.year, from: month))년")
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundStyle(Theme.secondaryText)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(Theme.secondaryText)
+                }
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 4)
+
+            if !isCurrentMonth {
+                Button {
+                    go(to: Date())
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "arrow.uturn.backward")
+                            .font(.system(size: 12, weight: .bold))
+                        Text("오늘")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .overlay(Capsule().stroke(Color.white, lineWidth: 1.5))
+                    .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .transition(.opacity)
+            }
+
+            iconButton("magnifyingglass") { showSearch = true }
+            iconButton("calendar") { showCalendars = true }
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
+        .animation(.easeInOut(duration: 0.2), value: isCurrentMonth)
     }
 
     private func iconButton(_ name: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: name)
-                .font(.system(size: 22, weight: .regular))
+                .font(.system(size: 21, weight: .regular))
                 .foregroundStyle(.white)
-                .frame(width: 44, height: 44)
+                .frame(width: 42, height: 44)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -176,6 +236,59 @@ struct ContentView: View {
     }
 }
 
+// MARK: - 월 눌렀을 때 날짜 이동
+
+struct DateJumpSheet: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var date: Date
+    let onDone: (Date) -> Void
+
+    init(initial: Date, onDone: @escaping (Date) -> Void) {
+        _date = State(initialValue: initial)
+        self.onDone = onDone
+    }
+
+    var body: some View {
+        VStack(spacing: 18) {
+            DatePicker("", selection: $date, displayedComponents: [.date])
+                .datePickerStyle(.wheel)
+                .labelsHidden()
+                .frame(maxWidth: .infinity)
+
+            HStack(spacing: 12) {
+                Button {
+                    onDone(Date())
+                    dismiss()
+                } label: {
+                    Text("오늘")
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundStyle(Theme.secondaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                        .background(Theme.surface2, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    onDone(date)
+                    dismiss()
+                } label: {
+                    Text("완료")
+                        .font(.system(size: 17, weight: .bold))
+                        .foregroundStyle(.white)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 54)
+                        .background(Color(white: 0.28), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.top, 24)
+        .padding(.bottom, 12)
+    }
+}
+
 // MARK: - 달력 격자
 
 struct MonthGridView: View {
@@ -192,7 +305,7 @@ struct MonthGridView: View {
             let rows = max(1, days.count / 7)
             let cellW = geo.size.width / 7
             let cellH = geo.size.height / CGFloat(rows)
-            let maxChips = max(0, Int((cellH - 30) / 16))
+            let maxChips = min(4, max(0, Int((cellH - 26) / 15)))
 
             VStack(spacing: 0) {
                 ForEach(0..<rows, id: \.self) { r in
@@ -259,25 +372,27 @@ struct DayCellView: View {
 
     var body: some View {
         let all = chips
-        let overflow = all.count > maxChips
-        let shown = overflow ? max(0, maxChips - 1) : all.count
+        let shown = min(all.count, maxChips)
         let hidden = all.count - shown
 
         VStack(spacing: 3) {
             Text(verbatim: "\(Calendar.kr.component(.day, from: day))")
-                .font(.system(size: 17, weight: isToday ? .bold : .medium))
+                .font(.system(size: 16, weight: isToday ? .bold : .medium))
                 .foregroundStyle(numberColor)
-                .padding(.top, 6)
+                .frame(maxWidth: .infinity)
+                .overlay(alignment: .trailing) {
+                    if hidden > 0 {
+                        Text(verbatim: "+\(hidden)")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(isToday ? Color.black.opacity(0.55) : Theme.secondaryText)
+                            .padding(.trailing, 3)
+                    }
+                }
+                .padding(.top, 5)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1.5) {
                 ForEach(all.prefix(shown)) { chip in
                     ChipView(chip: chip, onLight: isToday)
-                }
-                if hidden > 0 && maxChips > 0 {
-                    Text(verbatim: "+\(hidden)")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(isToday ? Color.black.opacity(0.6) : Theme.secondaryText)
-                        .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
             .padding(.horizontal, 2)
@@ -285,7 +400,8 @@ struct DayCellView: View {
             Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-        .background(background)
+        .background(background, in: RoundedRectangle(cornerRadius: Theme.cellRadius, style: .continuous))
+        .padding(1.5)
         .opacity(inMonth ? 1 : 0.35)
     }
 }
@@ -301,6 +417,9 @@ struct DayPanel: View {
     let onDelete: (Occurrence, Bool) -> Void
 
     var body: some View {
+        let todos = items.filter { $0.isAllDay }
+        let timed = items.filter { !$0.isAllDay }
+
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 Text(KFmt.fullDate(date))
@@ -316,70 +435,92 @@ struct DayPanel: View {
             }
             .padding(.horizontal, 4)
 
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(items) { o in
-                        EventRowView(occurrence: o)
-                            .contentShape(Rectangle())
-                            .onTapGesture { onOpen(o) }
-                            .contentShape(.contextMenuPreview, Rectangle())
-                            .contextMenu {
-                                if o.event.repeatRule != nil {
-                                    Button(role: .destructive) { onDelete(o, true) } label: {
-                                        Label("이 일정만 삭제", systemImage: "minus.circle")
-                                    }
-                                    Button(role: .destructive) { onDelete(o, false) } label: {
-                                        Label("모든 반복 일정 삭제", systemImage: "trash")
-                                    }
-                                } else {
-                                    Button(role: .destructive) { onDelete(o, false) } label: {
-                                        Label("삭제", systemImage: "trash")
-                                    }
-                                }
-                            }
-                    }
-                    Button(action: onAdd) {
-                        HStack(spacing: 10) {
-                            Image(systemName: "plus")
-                            Text("새로운 일정")
-                            Spacer()
+            // 할 일은 한 칸에 묶어서
+            if !todos.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(todos.enumerated()), id: \.element.id) { i, o in
+                        line(o, label: i == 0 ? "할 일" : "")
+                        if i < todos.count - 1 {
+                            Rectangle()
+                                .fill(Theme.line)
+                                .frame(height: 0.5)
+                                .padding(.leading, 76)
                         }
-                        .font(.system(size: 17, weight: .medium))
-                        .foregroundStyle(.white)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 14)
-                        .background(Theme.surface)
-                        .contentShape(Rectangle())
                     }
-                    .buttonStyle(.plain)
                 }
-                .padding(.bottom, 12)
+                .padding(.vertical, 2)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             }
+
+            // 시간 일정은 시간 순으로 하나씩
+            ForEach(timed) { o in
+                line(o, label: o.timeLabel, endLabel: o.end.map { KFmt.time($0) })
+                    .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            }
+
+            Button(action: onAdd) {
+                HStack(spacing: 10) {
+                    Image(systemName: "plus")
+                    Text("새로운 일정")
+                    Spacer()
+                }
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(.white)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 15)
+                .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+                .contentShape(RoundedRectangle(cornerRadius: Theme.radius))
+            }
+            .buttonStyle(.plain)
         }
         .padding(.horizontal, 12)
-        .padding(.top, 10)
+        .padding(.top, 12)
+        .padding(.bottom, 30)
+    }
+
+    private func line(_ o: Occurrence, label: String, endLabel: String? = nil) -> some View {
+        EventLineContent(occurrence: o, label: label, endLabel: endLabel)
+            .contentShape(Rectangle())
+            .onTapGesture { onOpen(o) }
+            .contentShape(.contextMenuPreview, RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            .contextMenu {
+                if o.event.repeatRule != nil {
+                    Button(role: .destructive) { onDelete(o, true) } label: {
+                        Label("이 일정만 삭제", systemImage: "minus.circle")
+                    }
+                    Button(role: .destructive) { onDelete(o, false) } label: {
+                        Label("모든 반복 일정 삭제", systemImage: "trash")
+                    }
+                } else {
+                    Button(role: .destructive) { onDelete(o, false) } label: {
+                        Label("삭제", systemImage: "trash")
+                    }
+                }
+            }
     }
 }
 
-struct EventRowView: View {
+struct EventLineContent: View {
     let occurrence: Occurrence
+    let label: String
+    var endLabel: String? = nil
 
     var body: some View {
         let o = occurrence
         HStack(spacing: 10) {
             VStack(alignment: .leading, spacing: 0) {
-                Text(o.timeLabel)
+                Text(label)
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundStyle(Color(white: 0.85))
-                if !o.isAllDay, let end = o.end {
-                    Text(KFmt.time(end))
+                if let endLabel {
+                    Text(endLabel)
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.secondaryText)
                 }
             }
-            .frame(width: 48, alignment: .leading)
+            .frame(width: 50, alignment: .leading)
 
-            Rectangle().fill(o.color).frame(width: 4, height: 26)
+            RoundedRectangle(cornerRadius: 2).fill(o.color).frame(width: 4, height: 26)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(o.title.isEmpty ? "제목 없음" : o.title)
@@ -399,7 +540,7 @@ struct EventRowView: View {
             HStack(spacing: 6) {
                 if o.event.repeatRule != nil { Image(systemName: "repeat") }
                 if !o.event.imageNames.isEmpty { Image(systemName: "photo") }
-                if o.event.alert != .none { Image(systemName: "bell") }
+                if o.event.alertOffset != nil { Image(systemName: "bell") }
             }
             .font(.system(size: 11))
             .foregroundStyle(Theme.secondaryText)
@@ -407,7 +548,6 @@ struct EventRowView: View {
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.surface)
     }
 
     private func subtitle(_ o: Occurrence) -> String? {

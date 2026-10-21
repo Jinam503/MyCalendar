@@ -1,5 +1,7 @@
 import SwiftUI
 import UserNotifications
+import EventKit
+import WidgetKit
 
 final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication,
@@ -38,19 +40,108 @@ struct MyCalendarApp: App {
 
 @MainActor
 final class EventStore: ObservableObject {
+    /// 앱 안에 저장한 일정
     @Published private(set) var events: [CalendarEvent] = []
+    /// 아이폰/구글 캘린더나 표시 설정이 바뀌면 올라감 → 화면 다시 그림
+    @Published private(set) var version = 0
+    @Published private(set) var calendarStatus: EKAuthorizationStatus = EKBridge.status
+
     private let repo = EventRepository.shared
+    private var observer: NSObjectProtocol?
 
     init() {
         events = repo.load()
+        observer = NotificationCenter.default.addObserver(forName: .EKEventStoreChanged,
+                                                          object: EKBridge.shared.store,
+                                                          queue: .main) { [weak self] _ in
+            Task { @MainActor in self?.externalChanged() }
+        }
     }
 
     func reload() {
         events = repo.load()
         NotificationScheduler.reschedule(events)
+        externalChanged()
     }
 
-    func upsert(_ event: CalendarEvent) {
+    func externalChanged() {
+        EKBridge.shared.invalidate()
+        calendarStatus = EKBridge.status
+        version += 1
+        WidgetCenter.shared.reloadAllTimelines()
+    }
+
+    func requestCalendarAccess() async {
+        _ = await EKBridge.shared.requestAccess()
+        externalChanged()
+    }
+
+    // MARK: 조회
+
+    func byDay(in range: DateInterval) -> [Date: [Occurrence]] {
+        CombinedSource.byDay(local: events, in: range)
+    }
+
+    func occurrences(on day: Date) -> [Occurrence] {
+        CombinedSource.onDay(local: events, day)
+    }
+
+    // MARK: 저장
+
+    /// calendarID == nil 이면 앱(내 캘린더)에, 아니면 아이폰/구글 캘린더에 저장
+    func save(_ event: CalendarEvent, to calendarID: String?, original: CalendarEvent?) throws {
+        var e = event
+        if let calID = calendarID {
+            if let o = original, !o.isExternal {
+                // 내 캘린더 → 구글로 옮김
+                removeLocal(o)
+                e.ekEventID = nil
+                e.ekOccurrenceStart = nil
+            }
+            try EKBridge.shared.save(e, calendarID: calID)
+            externalChanged()
+        } else {
+            if let o = original, o.isExternal {
+                // 구글 → 내 캘린더로 옮김
+                try EKBridge.shared.delete(o, onlyThis: false)
+                e.id = UUID()
+                e.ekEventID = nil
+                e.ekCalendarID = nil
+                e.ekOccurrenceStart = nil
+                e.colorHex = nil
+                externalChanged()
+            }
+            upsertLocal(e)
+        }
+    }
+
+    /// 일정 전체 삭제 (반복이면 모든 반복)
+    func delete(_ event: CalendarEvent) {
+        if event.isExternal {
+            try? EKBridge.shared.delete(event, onlyThis: false)
+            externalChanged()
+        } else {
+            removeLocal(event)
+        }
+    }
+
+    /// 반복 일정 중 하루만 삭제
+    func deleteOccurrence(of event: CalendarEvent, on day: Date) {
+        if event.isExternal {
+            try? EKBridge.shared.delete(event, onlyThis: true)
+            externalChanged()
+            return
+        }
+        guard let i = events.firstIndex(where: { $0.id == event.id }) else { return }
+        events[i].exceptions.append(Calendar.kr.startOfDay(for: day))
+        persist()
+    }
+
+    func settingsChanged() {
+        externalChanged()
+    }
+
+    private func upsertLocal(_ event: CalendarEvent) {
         if let i = events.firstIndex(where: { $0.id == event.id }) {
             events[i] = event
         } else {
@@ -59,17 +150,9 @@ final class EventStore: ObservableObject {
         persist()
     }
 
-    /// 일정 전체 삭제 (반복이면 모든 반복)
-    func delete(_ event: CalendarEvent) {
+    private func removeLocal(_ event: CalendarEvent) {
         events.removeAll { $0.id == event.id }
         repo.deleteImages(event.imageNames)
-        persist()
-    }
-
-    /// 반복 일정 중 하루만 삭제
-    func deleteOccurrence(of event: CalendarEvent, on day: Date) {
-        guard let i = events.firstIndex(where: { $0.id == event.id }) else { return }
-        events[i].exceptions.append(Calendar.kr.startOfDay(for: day))
         persist()
     }
 
@@ -96,9 +179,9 @@ enum NotificationScheduler {
         let range = DateInterval(start: cal.startOfDay(for: now), end: now.addingTimeInterval(62 * 86400))
 
         var items: [(fire: Date, occ: Occurrence)] = []
-        for e in events where e.alert != .none {
+        for e in events where e.alertOffset != nil {
             for o in e.occurrences(in: range, cal: cal) {
-                if let fire = e.alert.fireDate(for: o.start, cal: cal), fire > now {
+                if let fire = AlertText.fireDate(offset: e.alertOffset, start: o.start, allDay: e.isAllDay, cal: cal), fire > now {
                     items.append((fire, o))
                 }
             }

@@ -2,47 +2,81 @@ import Foundation
 import SwiftUI
 
 // MARK: - 알림
+// 알림은 "시작 기준 몇 분 전"으로 저장합니다 (할 일은 그날 0시 기준, 음수면 이후). nil = 알림 없음.
 
-enum AlertOption: String, Codable, CaseIterable, Identifiable {
-    case none, atTime, min5, min10, min15, min30, hour1, day1
-    case dayOf9am, dayBefore9pm
+enum AlertText {
+    static let defaultTimed = 30          // 30분 전
+    static let defaultAllDay = -540       // 당일 오전 9시
 
-    var id: String { rawValue }
+    static func defaultOffset(allDay: Bool) -> Int { allDay ? defaultAllDay : defaultTimed }
 
-    /// 시간 있는 일정용
-    static let timedOptions: [AlertOption] = [.none, .atTime, .min5, .min10, .min15, .min30, .hour1, .day1]
-    /// 할 일(시간 없음)용
-    static let allDayOptions: [AlertOption] = [.none, .dayOf9am, .dayBefore9pm]
+    /// 시간 일정용 기본 선택지
+    static let timedPresets: [Int] = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 360, 720, 1440, 2880, 10080]
+    /// 할 일용 기본 선택지
+    static let allDayPresets: [Int] = [-420, -480, -540, -600, -720, -1080, 180, 360, 900, 2340, 3780, 9540]
 
-    static func defaultFor(allDay: Bool) -> AlertOption { allDay ? .dayOf9am : .min30 }
-
-    var label: String {
-        switch self {
-        case .none: return "알림 없음"
-        case .atTime: return "정시"
-        case .min5: return "5분 전"
-        case .min10: return "10분 전"
-        case .min15: return "15분 전"
-        case .min30: return "30분 전"
-        case .hour1: return "1시간 전"
-        case .day1: return "하루 전"
-        case .dayOf9am: return "당일 오전 9시"
-        case .dayBefore9pm: return "전날 오후 9시"
+    static func label(_ offset: Int?, allDay: Bool) -> String {
+        guard let off = offset else { return "알림 없음" }
+        if allDay {
+            let t = -off
+            let dayDelta = Int((Double(t) / 1440.0).rounded(.down))
+            let minuteOfDay = t - dayDelta * 1440
+            let dayText: String
+            if dayDelta == 0 { dayText = "당일" }
+            else if dayDelta == -1 { dayText = "전날" }
+            else if dayDelta < 0 { dayText = "\(-dayDelta)일 전" }
+            else { dayText = "\(dayDelta)일 후" }
+            return dayText + " " + clock(minuteOfDay)
         }
+        if off == 0 { return "정시" }
+        let after = off < 0
+        var m = abs(off)
+        var parts: [String] = []
+        if m % 10080 == 0 {
+            parts.append("\(m / 10080)주")
+        } else {
+            let d = m / 1440
+            m %= 1440
+            let h = m / 60
+            let mi = m % 60
+            if d > 0 { parts.append("\(d)일") }
+            if h > 0 { parts.append("\(h)시간") }
+            if mi > 0 { parts.append("\(mi)분") }
+        }
+        return parts.joined(separator: " ") + (after ? " 후" : " 전")
     }
 
-    func fireDate(for start: Date, cal: Calendar = .kr) -> Date? {
-        switch self {
-        case .none: return nil
-        case .atTime: return start
-        case .min5: return start.addingTimeInterval(-5 * 60)
-        case .min10: return start.addingTimeInterval(-10 * 60)
-        case .min15: return start.addingTimeInterval(-15 * 60)
-        case .min30: return start.addingTimeInterval(-30 * 60)
-        case .hour1: return start.addingTimeInterval(-3600)
-        case .day1: return start.addingTimeInterval(-86400)
-        case .dayOf9am: return cal.startOfDay(for: start).addingTimeInterval(9 * 3600)
-        case .dayBefore9pm: return cal.startOfDay(for: start).addingTimeInterval(-3 * 3600)
+    /// 0시부터 몇 분 → "오전 9시", "오후 9시 30분", "정오"
+    static func clock(_ minuteOfDay: Int) -> String {
+        let h = minuteOfDay / 60
+        let m = minuteOfDay % 60
+        if h == 12 && m == 0 { return "정오" }
+        if h == 0 && m == 0 { return "자정" }
+        let ampm = h < 12 ? "오전" : "오후"
+        var h12 = h % 12
+        if h12 == 0 { h12 = 12 }
+        return "\(ampm) \(h12)시" + (m > 0 ? " \(m)분" : "")
+    }
+
+    static func fireDate(offset: Int?, start: Date, allDay: Bool, cal: Calendar = .kr) -> Date? {
+        guard let off = offset else { return nil }
+        let base = allDay ? cal.startOfDay(for: start) : start
+        return base.addingTimeInterval(TimeInterval(-off * 60))
+    }
+
+    /// 예전 버전의 알림 값 변환
+    static func fromLegacy(_ raw: String) -> Int? {
+        switch raw {
+        case "atTime": return 0
+        case "min5": return 5
+        case "min10": return 10
+        case "min15": return 15
+        case "min30": return 30
+        case "hour1": return 60
+        case "day1": return 1440
+        case "dayOf9am": return -540
+        case "dayBefore9pm": return 180
+        default: return nil
         }
     }
 }
@@ -136,22 +170,38 @@ struct CalendarEvent: Identifiable, Codable, Hashable {
     /// nil = 끝 시간(끝 날짜) 없음. 할 일이면 마지막 날의 0시
     var end: Date? = nil
     /// true = 할 일 (시간 없음)
-    var isAllDay: Bool = true
+    var isAllDay: Bool = false
     var colorIndex: Int = 0
     var notes: String = ""
     var location: String = ""
     var url: String = ""
     var imageNames: [String] = []
-    var alert: AlertOption = .dayOf9am
+    /// 시작 기준 몇 분 전 (할 일은 그날 0시 기준). nil = 알림 없음
+    var alertOffset: Int? = AlertText.defaultTimed
     var repeatRule: RepeatRule? = nil
     /// 반복 중 지운 날짜들 (0시)
     var exceptions: [Date] = []
 
+    // 아이폰 캘린더(구글 등)에서 온 일정일 때만 채워짐. 앱 파일에는 저장 안 함
+    var ekEventID: String? = nil
+    var ekCalendarID: String? = nil
+    var ekOccurrenceStart: Date? = nil
+    var colorHex: String? = nil
+
     enum CodingKeys: String, CodingKey {
-        case id, title, start, end, isAllDay, colorIndex, notes, location, url, imageNames, alert, repeatRule, exceptions
+        case id, title, start, end, isAllDay, colorIndex, notes, location, url, imageNames
+        case alertOffset, noAlert, repeatRule, exceptions
     }
 
-    var color: Color { EventPalette.color(colorIndex) }
+    private enum LegacyKeys: String, CodingKey { case alert }
+
+    /// 구글·아이폰 캘린더 일정인지
+    var isExternal: Bool { ekCalendarID != nil }
+
+    var color: Color {
+        if let hex = colorHex, let c = Color(hex: hex) { return c }
+        return EventPalette.color(colorIndex)
+    }
 
     var duration: TimeInterval {
         guard let end else { return 0 }
@@ -162,15 +212,14 @@ struct CalendarEvent: Identifiable, Codable, Hashable {
         let cal = Calendar.kr
         let today = cal.startOfDay(for: Date())
         return [
-            CalendarEvent(title: "장보기", start: today, colorIndex: 5),
-            CalendarEvent(title: "팀 회의", start: today.addingTimeInterval(10 * 3600), end: today.addingTimeInterval(11 * 3600), isAllDay: false, colorIndex: 0, alert: .min30),
-            CalendarEvent(title: "저녁 약속", start: today.addingTimeInterval(19 * 3600), isAllDay: false, colorIndex: 1, alert: .min30),
+            CalendarEvent(title: "장보기", start: today, isAllDay: true, colorIndex: 5, alertOffset: AlertText.defaultAllDay),
+            CalendarEvent(title: "팀 회의", start: today.addingTimeInterval(10 * 3600), end: today.addingTimeInterval(11 * 3600), colorIndex: 0),
+            CalendarEvent(title: "저녁 약속", start: today.addingTimeInterval(19 * 3600), colorIndex: 1),
         ]
     }
 }
 
 extension CalendarEvent {
-    /// 이전 버전 데이터도 읽을 수 있게 없는 항목은 기본값으로
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = try c.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
@@ -183,9 +232,20 @@ extension CalendarEvent {
         location = try c.decodeIfPresent(String.self, forKey: .location) ?? ""
         url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
         imageNames = try c.decodeIfPresent([String].self, forKey: .imageNames) ?? []
-        alert = (try? c.decodeIfPresent(AlertOption.self, forKey: .alert)) ?? AlertOption.defaultFor(allDay: isAllDay)
         repeatRule = try? c.decodeIfPresent(RepeatRule.self, forKey: .repeatRule)
         exceptions = (try? c.decodeIfPresent([Date].self, forKey: .exceptions)) ?? []
+
+        let noAlert = (try? c.decodeIfPresent(Bool.self, forKey: .noAlert)) ?? false
+        if noAlert {
+            alertOffset = nil
+        } else if let off = try? c.decodeIfPresent(Int.self, forKey: .alertOffset) {
+            alertOffset = off
+        } else if let legacy = try? decoder.container(keyedBy: LegacyKeys.self),
+                  let raw = try? legacy.decodeIfPresent(String.self, forKey: .alert) {
+            alertOffset = raw == "none" ? nil : (AlertText.fromLegacy(raw) ?? AlertText.defaultOffset(allDay: isAllDay))
+        } else {
+            alertOffset = AlertText.defaultOffset(allDay: isAllDay)
+        }
 
         if isAllDay {
             let cal = Calendar.kr
@@ -196,6 +256,24 @@ extension CalendarEvent {
             }
         }
     }
+
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(title, forKey: .title)
+        try c.encode(start, forKey: .start)
+        try c.encodeIfPresent(end, forKey: .end)
+        try c.encode(isAllDay, forKey: .isAllDay)
+        try c.encode(colorIndex, forKey: .colorIndex)
+        try c.encode(notes, forKey: .notes)
+        try c.encode(location, forKey: .location)
+        try c.encode(url, forKey: .url)
+        try c.encode(imageNames, forKey: .imageNames)
+        try c.encodeIfPresent(alertOffset, forKey: .alertOffset)
+        try c.encode(alertOffset == nil, forKey: .noAlert)
+        try c.encodeIfPresent(repeatRule, forKey: .repeatRule)
+        try c.encode(exceptions, forKey: .exceptions)
+    }
 }
 
 // MARK: - 실제로 달력에 나타나는 한 번의 일정 (반복 펼친 것)
@@ -205,7 +283,10 @@ struct Occurrence: Identifiable, Hashable {
     let start: Date
     let end: Date?
 
-    var id: String { event.id.uuidString + "-" + String(Int(start.timeIntervalSince1970)) }
+    var id: String {
+        let key = event.ekEventID ?? event.id.uuidString
+        return key + "-" + String(Int(start.timeIntervalSince1970))
+    }
     var title: String { event.title }
     var color: Color { event.color }
     var isAllDay: Bool { event.isAllDay }
@@ -353,27 +434,21 @@ extension CalendarEvent {
 
 // MARK: - 날짜별 조회
 
-extension Array where Element == Occurrence {
+enum Occurrences {
     /// 할 일 먼저, 그다음 시간 일정을 시간 순으로
-    func sortedForDay() -> [Occurrence] {
-        sorted { a, b in
+    static func sortedForDay(_ list: [Occurrence]) -> [Occurrence] {
+        list.sorted { a, b in
             if a.isAllDay != b.isAllDay { return a.isAllDay }
             if a.start != b.start { return a.start < b.start }
             return a.title < b.title
         }
     }
-}
 
-extension Array where Element == CalendarEvent {
-    func occurrences(in range: DateInterval, cal: Calendar = .kr) -> [Occurrence] {
-        flatMap { $0.occurrences(in: range, cal: cal) }
-    }
-
-    /// 범위 안의 날짜(0시)별 일정
-    func byDay(in range: DateInterval, cal: Calendar = .kr) -> [Date: [Occurrence]] {
+    /// 범위 안의 날짜(0시)별로 나누기
+    static func bucket(_ list: [Occurrence], in range: DateInterval, cal: Calendar = .kr) -> [Date: [Occurrence]] {
         var map: [Date: [Occurrence]] = [:]
-        for o in occurrences(in: range, cal: cal) {
-            var d = Swift.max(cal.startOfDay(for: o.start), range.start)
+        for o in list {
+            var d = max(cal.startOfDay(for: o.start), range.start)
             let last = o.lastDay(cal)
             var guardCount = 0
             while d <= last && d < range.end && guardCount < 400 {
@@ -384,34 +459,33 @@ extension Array where Element == CalendarEvent {
             }
         }
         for k in map.keys {
-            map[k] = map[k]?.sortedForDay()
+            map[k] = sortedForDay(map[k] ?? [])
         }
         return map
     }
 
-    func occurrences(on day: Date, cal: Calendar = .kr) -> [Occurrence] {
-        let s = cal.startOfDay(for: day)
-        guard let e = cal.date(byAdding: .day, value: 1, to: s) else { return [] }
-        return byDay(in: DateInterval(start: s, end: e), cal: cal)[s] ?? []
-    }
-
-    /// 오늘 할 일 + 앞으로 있을 일정 (위젯용)
-    func upcoming(from now: Date, limit: Int, cal: Calendar = .kr) -> [Occurrence] {
+    /// 오늘 할 일 + 앞으로 있을 일정
+    static func upcoming(_ list: [Occurrence], from now: Date, limit: Int, cal: Calendar = .kr) -> [Occurrence] {
         let today = cal.startOfDay(for: now)
-        guard let rangeEnd = cal.date(byAdding: .day, value: 31, to: today) else { return [] }
-        let all = occurrences(in: DateInterval(start: today, end: rangeEnd), cal: cal).filter { o in
+        let filtered = list.filter { o in
             if o.isAllDay { return o.lastDay(cal) >= today }
             if let end = o.end { return end > now }
             return o.start >= now.addingTimeInterval(-30 * 60)
         }
-        let sorted = all.sorted { a, b in
-            let da = Swift.max(cal.startOfDay(for: a.start), today)
-            let db = Swift.max(cal.startOfDay(for: b.start), today)
+        let sorted = filtered.sorted { a, b in
+            let da = max(cal.startOfDay(for: a.start), today)
+            let db = max(cal.startOfDay(for: b.start), today)
             if da != db { return da < db }
             if a.isAllDay != b.isAllDay { return a.isAllDay }
             return a.start < b.start
         }
         return [Occurrence](sorted.prefix(limit))
+    }
+}
+
+extension Array where Element == CalendarEvent {
+    func occurrences(in range: DateInterval, cal: Calendar = .kr) -> [Occurrence] {
+        flatMap { $0.occurrences(in: range, cal: cal) }
     }
 }
 

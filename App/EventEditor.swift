@@ -37,6 +37,9 @@ struct EventEditor: View {
     @State private var alertOffset: Int?
     @State private var repeatRule: RepeatRule?
     @State private var calendarID: String?
+    /// 할 일로 바꿨을 때 원래 시간을 기억해 뒀다가 되돌릴 때 사용
+    @State private var savedTimedStart: Date?
+    @State private var savedTimedEnd: Date?
 
     @State private var picking: PickTarget?
     @State private var photoItems: [PhotosPickerItem] = []
@@ -70,14 +73,7 @@ struct EventEditor: View {
             _calendarID = State(initialValue: e.ekCalendarID)
         } else {
             // 새 일정: 시작·종료 시간이 있는 일정이 기본 (다음 정시부터 1시간)
-            var comps = cal.dateComponents([.year, .month, .day], from: date)
-            if cal.isDateInToday(date) {
-                comps.hour = min(cal.component(.hour, from: Date()) + 1, 23)
-            } else {
-                comps.hour = 9
-            }
-            comps.minute = 0
-            let s = cal.date(from: comps) ?? date
+            let s = EventEditor.defaultStart(on: date, cal: cal)
             _title = State(initialValue: "")
             _isAllDay = State(initialValue: false)
             _start = State(initialValue: s)
@@ -206,17 +202,12 @@ struct EventEditor: View {
                 allDayChanged(allDay)
             }
             .onChange(of: hasEnd) { _, on in
-                // 종료 지정을 켜면 시작 기준 1시간 뒤(할 일은 같은 날)가 기본
-                if on {
-                    end = isAllDay ? start : start.addingTimeInterval(3600)
-                } else if picking == .end {
+                // 종료 시간을 켜면 시작 기준 1시간 뒤가 기본
+                if on && !isAllDay {
+                    end = start.addingTimeInterval(3600)
+                } else if !on && picking == .end {
                     picking = nil
                 }
-            }
-            .onChange(of: start) { old, new in
-                // 시작을 옮기면 종료도 같은 간격만큼 따라감
-                let gap = max(0, end.timeIntervalSince(old))
-                end = new.addingTimeInterval(gap)
             }
             .onChange(of: photoItems) { _, items in
                 guard !items.isEmpty else { return }
@@ -271,50 +262,69 @@ struct EventEditor: View {
 
     private var timeSection: some View {
         row("clock") {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 6) {
                     timeBlock(start, target: .start)
-                    if hasEnd {
+                    if hasEnd && !isAllDay {
                         Image(systemName: "chevron.right")
+                            .font(.system(size: 14, weight: .semibold))
                             .foregroundStyle(Theme.secondaryText)
                         timeBlock(end, target: .end)
                     }
-                    Spacer(minLength: 4)
+                    Spacer(minLength: 0)
+                }
+                .frame(height: 62)
+
+                HStack(spacing: 10) {
                     pillChip("할 일", on: isAllDay) { isAllDay.toggle() }
+                    Spacer(minLength: 4)
+                    // 할 일 모드에서도 줄 높이가 변하지 않게 자리는 유지
+                    Group {
+                        Text("종료 시간")
+                            .font(.system(size: 15))
+                            .foregroundStyle(Theme.secondaryText)
+                            .lineLimit(1)
+                        SquareSwitch(isOn: $hasEnd)
+                    }
+                    .opacity(isAllDay ? 0 : 1)
+                    .allowsHitTesting(!isAllDay)
                 }
-                HStack {
-                    Text(isAllDay ? "종료일 지정" : "종료 시간 지정")
-                        .font(.system(size: 15))
-                        .foregroundStyle(Theme.secondaryText)
-                    Spacer()
-                    SquareSwitch(isOn: $hasEnd)
-                }
+                .frame(height: 36)
             }
         }
     }
 
     private func timeBlock(_ d: Date, target: PickTarget) -> some View {
         let active = picking == target
+        let dim = picking != nil && !active
         return Button {
             withAnimation(.easeInOut(duration: 0.2)) {
                 picking = active ? nil : target
             }
         } label: {
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 1) {
                 if isAllDay {
                     Text(KFmt.monthDay(d))
-                        .font(.system(size: 20, weight: .bold))
+                        .font(.system(size: 24, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 } else {
                     Text(KFmt.monthDay(d))
                         .font(.system(size: 13))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
                         .opacity(0.85)
                     Text(KFmt.time(d))
                         .font(.system(size: 28, weight: .bold))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.7)
                 }
             }
-            .foregroundStyle(active ? Color.white : Color(white: active || picking == nil ? 1 : 0.55))
+            .fixedSize(horizontal: true, vertical: false)
+            .foregroundStyle(dim ? Color(white: 0.55) : Color.white)
             .padding(.vertical, 4)
             .padding(.horizontal, 8)
+            .frame(height: 62)
             .background(active ? Theme.surface2 : Color.clear,
                         in: RoundedRectangle(cornerRadius: 10, style: .continuous))
         }
@@ -327,7 +337,7 @@ struct EventEditor: View {
         if let target = picking {
             VStack(spacing: 10) {
                 if target == .start {
-                    WheelDatePicker(date: $start,
+                    WheelDatePicker(date: startBinding,
                                     mode: isAllDay ? .date : .dateAndTime,
                                     minuteInterval: 5)
                         .frame(height: 200)
@@ -343,12 +353,6 @@ struct EventEditor: View {
                     HStack(spacing: 8) {
                         ForEach([0, 30, 60, 90, 120], id: \.self) { m in
                             durationChip(m)
-                        }
-                    }
-                } else if hasEnd && isAllDay {
-                    HStack(spacing: 8) {
-                        ForEach([1, 2, 3, 7], id: \.self) { d in
-                            dayLengthChip(d)
                         }
                     }
                 }
@@ -368,6 +372,18 @@ struct EventEditor: View {
         return pillChip(label, on: on, small: true) {
             end = start.addingTimeInterval(TimeInterval(minutes * 60))
         }
+    }
+
+    /// 시작을 옮기면 종료도 같은 간격만큼 따라감
+    private var startBinding: Binding<Date> {
+        Binding(
+            get: { start },
+            set: { newValue in
+                let gap = max(0, end.timeIntervalSince(start))
+                start = newValue
+                end = newValue.addingTimeInterval(gap)
+            }
+        )
     }
 
     private func dayLengthChip(_ days: Int) -> some View {
@@ -600,21 +616,40 @@ struct EventEditor: View {
     // MARK: 동작
 
     private func allDayChanged(_ allDay: Bool) {
+        picking = nil
         if allDay {
+            // 시간 일정 → 할 일: 원래 시간 기억
+            savedTimedStart = start
+            savedTimedEnd = end
             start = cal.startOfDay(for: start)
-            end = cal.startOfDay(for: end)
-        } else if cal.startOfDay(for: start) == start {
-            // 할 일 → 시간 일정: 그날의 다음 정시로
-            var comps = cal.dateComponents([.year, .month, .day], from: start)
-            comps.hour = min(cal.component(.hour, from: Date()) + 1, 23)
-            comps.minute = 0
-            let s = cal.date(from: comps) ?? start
+            end = start
+        } else if let ts = savedTimedStart, let te = savedTimedEnd {
+            // 할 일 → 시간 일정: 기억해 둔 시간 그대로 (날짜를 바꿨으면 그 날짜로)
+            let shift = cal.dateComponents([.day], from: cal.startOfDay(for: ts), to: cal.startOfDay(for: start)).day ?? 0
+            start = cal.date(byAdding: .day, value: shift, to: ts) ?? ts
+            end = cal.date(byAdding: .day, value: shift, to: te) ?? te
+        } else {
+            // 원래 할 일이던 일정: 가까운 다음 정시부터 1시간
+            let s = Self.defaultStart(on: start, cal: cal)
             start = s
             end = s.addingTimeInterval(3600)
+            hasEnd = true
         }
         if alertOffset != nil {
             alertOffset = AlertText.defaultOffset(allDay: allDay)
         }
+    }
+
+    /// 오늘이면 다음 정시, 다른 날이면 오전 9시
+    static func defaultStart(on date: Date, cal: Calendar) -> Date {
+        var comps = cal.dateComponents([.year, .month, .day], from: date)
+        if cal.isDateInToday(date) {
+            comps.hour = min(cal.component(.hour, from: Date()) + 1, 23)
+        } else {
+            comps.hour = 9
+        }
+        comps.minute = 0
+        return cal.date(from: comps) ?? date
     }
 
     @MainActor
@@ -638,13 +673,9 @@ struct EventEditor: View {
     private func save() {
         guard !trimmedTitle.isEmpty else { return }
         var s = start
-        var e: Date? = hasEnd ? end : nil
+        var e: Date? = (hasEnd && !isAllDay) ? end : nil
         if isAllDay {
             s = cal.startOfDay(for: start)
-            if let ee = e {
-                let lastDay = cal.startOfDay(for: ee)
-                e = lastDay > s ? lastDay : nil
-            }
         } else if let ee = e, ee < s {
             e = s
         }

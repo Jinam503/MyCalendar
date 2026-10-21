@@ -13,7 +13,8 @@ enum AlertText {
     /// 시간 일정용 기본 선택지
     static let timedPresets: [Int] = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 360, 720, 1440, 2880, 10080]
     /// 할 일용 기본 선택지
-    static let allDayPresets: [Int] = [-420, -480, -540, -600, -720, -1080, 180, 360, 900, 2340, 3780, 9540]
+    /// 할 일용 선택지: 정시(당일 0시), 당일 9시, 전날 0시, 전날 9시
+    static let allDayPresets: [Int] = [0, -540, 1440, 900]
 
     static func label(_ offset: Int?, allDay: Bool) -> String {
         guard let off = offset else { return "알림 없음" }
@@ -26,7 +27,10 @@ enum AlertText {
             else if dayDelta == -1 { dayText = "전날" }
             else if dayDelta < 0 { dayText = "\(-dayDelta)일 전" }
             else { dayText = "\(dayDelta)일 후" }
-            return dayText + " " + clock(minuteOfDay)
+            if off == 0 { return "정시 (당일 0시)" }
+            let h = minuteOfDay / 60
+            let m = minuteOfDay % 60
+            return dayText + " \(h)시" + (m > 0 ? " \(m)분" : "")
         }
         if off == 0 { return "정시" }
         let after = off < 0

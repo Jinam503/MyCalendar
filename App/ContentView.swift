@@ -372,7 +372,9 @@ struct DayCellView: View {
 
     var body: some View {
         let all = chips
-        let shown = min(all.count, maxChips)
+        // 넘치면 마지막 칸을 "+n"으로 (일정 5개 → 3개 + "+2")
+        let overflow = all.count > maxChips && maxChips > 0
+        let shown = overflow ? maxChips - 1 : min(all.count, maxChips)
         let hidden = all.count - shown
 
         VStack(spacing: 3) {
@@ -380,19 +382,20 @@ struct DayCellView: View {
                 .font(.system(size: 16, weight: isToday ? .bold : .medium))
                 .foregroundStyle(numberColor)
                 .frame(maxWidth: .infinity)
-                .overlay(alignment: .trailing) {
-                    if hidden > 0 {
-                        Text(verbatim: "+\(hidden)")
-                            .font(.system(size: 9, weight: .bold))
-                            .foregroundStyle(isToday ? Color.black.opacity(0.55) : Theme.secondaryText)
-                            .padding(.trailing, 3)
-                    }
-                }
                 .padding(.top, 5)
 
             VStack(alignment: .leading, spacing: 1.5) {
                 ForEach(all.prefix(shown)) { chip in
                     ChipView(chip: chip, onLight: isToday)
+                }
+                if overflow {
+                    Text(verbatim: "+\(hidden)")
+                        .font(.system(size: 9.5, weight: .bold))
+                        .foregroundStyle(isToday ? Color.black.opacity(0.6) : Theme.secondaryText)
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 13)
+                        .background(isToday ? Color.black.opacity(0.08) : Color.white.opacity(0.06),
+                                    in: RoundedRectangle(cornerRadius: 3, style: .continuous))
                 }
             }
             .padding(.horizontal, 2)

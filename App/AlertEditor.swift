@@ -48,7 +48,6 @@ struct AlertEditor: View {
                 }
                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
 
-                if !allDay {
                 Text("직접 설정")
                     .font(.system(size: 17, weight: .bold))
                     .foregroundStyle(.white)
@@ -75,7 +74,6 @@ struct AlertEditor: View {
                 }
                 .padding(14)
                 .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
-                }
             }
             .padding(20)
         }

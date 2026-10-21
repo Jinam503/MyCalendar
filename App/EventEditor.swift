@@ -350,11 +350,12 @@ struct EventEditor: View {
                 }
 
                 if hasEnd && !isAllDay {
-                    HStack(spacing: 8) {
-                        ForEach([0, 30, 60, 90, 120], id: \.self) { m in
+                    HStack(spacing: 10) {
+                        ForEach([30, 60, 120, 180], id: \.self) { m in
                             durationChip(m)
                         }
                     }
+                    .frame(maxWidth: .infinity, alignment: .center)
                 }
             }
             .padding(.horizontal, 16)

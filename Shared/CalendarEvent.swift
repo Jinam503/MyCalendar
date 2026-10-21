@@ -11,7 +11,7 @@ enum AlertText {
     static func defaultOffset(allDay: Bool) -> Int { allDay ? defaultAllDay : defaultTimed }
 
     /// 시간 일정용 기본 선택지
-    static let timedPresets: [Int] = [0, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 360, 720, 1440, 2880, 10080]
+    static let timedPresets: [Int] = [0, 5, 10, 20, 30, 60, 120, 180, 360, 720, 1440, 2880, 10080]
     /// 할 일용 기본 선택지
     /// 할 일용 선택지: 정시(당일 0시), 당일 9시, 전날 0시, 전날 9시
     static let allDayPresets: [Int] = [0, -540, 1440, 900]

@@ -259,8 +259,15 @@ struct WidgetDayCell: View {
 
             if maxChips > 0 {
                 VStack(spacing: 1) {
-                    ForEach(chips.prefix(maxChips)) { chip in
+                    let overflow = chips.count > maxChips
+                    ForEach(chips.prefix(overflow ? maxChips - 1 : maxChips)) { chip in
                         ChipView(chip: chip, onLight: isToday, fontSize: chipFont)
+                    }
+                    if overflow {
+                        Text(verbatim: "+\(chips.count - maxChips + 1)")
+                            .font(.system(size: chipFont, weight: .bold))
+                            .foregroundStyle(isToday ? Color.black.opacity(0.6) : Theme.secondaryText)
+                            .frame(maxWidth: .infinity)
                     }
                 }
                 .padding(.horizontal, 1)

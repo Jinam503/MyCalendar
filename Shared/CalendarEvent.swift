@@ -411,7 +411,7 @@ extension Array where Element == CalendarEvent {
             if a.isAllDay != b.isAllDay { return a.isAllDay }
             return a.start < b.start
         }
-        return Array(sorted.prefix(limit))
+        return [Occurrence](sorted.prefix(limit))
     }
 }
 

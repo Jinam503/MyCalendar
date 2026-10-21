@@ -26,7 +26,7 @@ targets:
     info:
       path: App/Info.plist
       properties:
-        CFBundleDisplayName: 내 캘린더
+        CFBundleDisplayName: MyCalendar
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -56,7 +56,7 @@ targets:
     info:
       path: Widget/Info.plist
       properties:
-        CFBundleDisplayName: 내 캘린더
+        CFBundleDisplayName: MyCalendar 
         NSExtension:
           NSExtensionPointIdentifier: com.apple.widgetkit-extension
     settings:
